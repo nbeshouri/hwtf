@@ -15,32 +15,23 @@ DB_PATH = '/Volumes/Data 1/Not Backed Up/Temp/wiki.sqlite'
 data_dir_path = os.path.join(os.path.dirname(__file__), 'data')
 
 
-def get_pages_with_category(category_patterns, limit=None):
+def get_pages_with_category(category_patterns, title_black_list=None, limit=None):
     
     title_to_page = {}
     
     def process_page(text):
         title = re.search(r'<title>(.+)</title>', text).group(1)
         
-        # TODO: This should be broken down into two lists.
-        # as this function could be used generally. Some of the
-        # more later ones shouldn't actually matter because their
-        # name won't actually match any subjects.
-        title_patterns = [
+        default_black_list = [
             '(disabiguation)', 
             'List of', 
-            ' and ', 
-            ' kids', 
-            'Knights', 
-            'X-Men', 
             'Category:',
-            '(characters),
-            'The League of Extraordinary Gentlemen', 
-            'The Fabulous Furry Freak Brothers',
-            'The Emperor\'s New Clothes'
+            'Template:',
         ]
         
-        for title_pattern in title_patterns:
+        black_list = default_black_list + title_black_list
+        
+        for title_pattern in black_list:
             if title_pattern in title:
                 return
         
@@ -63,7 +54,7 @@ def get_pages_with_category(category_patterns, limit=None):
         article_text = text_node.get_text()
         title_to_page[title] = article_text
         
-        if len(title_to_page) % 1000 == 0:
+        if len(title_to_page) % 1 == 0:
             print('Articles found:', len(title_to_page), 'Last title:', title)
         
     with bz2.open(DUMP_PATH, 'rt', encoding='utf-8') as f:
@@ -122,46 +113,89 @@ def get_paragraphs(text):
     
     
 def convert_articles(name_to_article, lemmatize=False, limit=None):
-    converted = {}
-    for i, (article_name, text) in enumerate(name_to_article.items()):
-        print(article_name)
+    tokenized_articles = {}
+    lemmatized_articles = {}
+    for article_name, text in name_to_article.items():
         character_name = re.sub(r'\(.*\)', '', article_name)
         text = de_wiki(text)
-        sentences = []
+        tokenized_sents = []
+        lemmatized_sents = []
         paragrahs = get_paragraphs(text)
-        # print('Paragraphs:', len(paragrahs))
         for paragraph in get_paragraphs(text):
             subject_tokens = transforms.get_subject_tokens(paragraph, character_name)
-            # print('Subject tokens:', len(subject_tokens))
             for subject_token in subject_tokens:
                 extracted = transforms.extract_phrase(subject_token, character_name)
-                extracted = transforms.tokens_to_str(extracted, spaces_before_punct=True)
-                sentences.append(extracted)
-        converted[article_name] = sentences
-        if limit is not None and i == limit:
+                tokenized_sent = transforms.tokens_to_str(
+                    extracted, 
+                    spaces_before_punct=True,
+                    lower_case=True,
+                    remove_numbers=True
+                )
+                tokenized_sents.append(tokenized_sent)
+                lemmatized_sent = transforms.tokens_to_str(
+                    extracted, 
+                    remove_punct=True, 
+                    convert_to_lemmas=True,
+                    remove_stop_words=True,
+                    lower_case=True,
+                    remove_numbers=True
+                )
+                lemmatized_sents.append(lemmatized_sent)
+        tokenized_articles[article_name] = tokenized_sents
+        lemmatized_articles[article_name] = lemmatized_sents
+        if len(tokenized_articles) % 100 == 0:
+            print('Processed:', len(tokenized_articles), 'Last:', article_name)
+        if limit is not None and len(tokenized_articles) == limit:
             break
-    return converted
+    return tokenized_articles, lemmatized_articles
         
 
 def sandbox1():
     file_name = 'character_bios.pickle'
     load_path = os.path.join(data_dir_path, file_name)
     name_to_article = joblib.load(load_path)
-    converted = convert_articles(name_to_article, limit=1000)
-    file_name = 'character_bios_processed.pickle'
+    tokenized_articles, lemmatized_articles = convert_articles(name_to_article, limit=None)
+    
+    file_name = 'character_bios_tokenized.pickle'
     utils.archive_data(file_name)
     dump_path = os.path.join(data_dir_path, file_name)
-    joblib.dump(converted, dump_path, compress=3)
+    joblib.dump(tokenized_articles, dump_path, compress=3)
+    
+    file_name = 'character_bios_lemmatized.pickle'
+    utils.archive_data(file_name)
+    dump_path = os.path.join(data_dir_path, file_name)
+    joblib.dump(lemmatized_articles, dump_path, compress=3)
     
     
 
 def sandbox():
+    
+    title_black_list = utils.load_values('character_article_title_black_list.csv')
+    
     patterns = [
         r'.+characters in.+',
         r'.*characters introduced in' 
     ]
-    title_to_page = get_pages_with_category(patterns, limit=125000)
+    
+    title_to_page = get_pages_with_category(
+        patterns, 
+        title_black_list=title_black_list, 
+        limit=125000
+    )
+    
     file_name = 'character_bios.pickle'
+    # path = os.path.join(data_dir_path, file_name)
+    # utils.archive_data(file_name)
+    # joblib.dump(title_to_page, path, compress=3)
+    
+
+def sandbox3():
+    patterns = [
+        r'Films.+',
+    ]
+    title_to_page = get_pages_with_category(patterns, limit=125000)
+    file_name = 'films.pickle'
     path = os.path.join(data_dir_path, file_name)
     utils.archive_data(file_name)
     joblib.dump(title_to_page, path, compress=3)
+    
