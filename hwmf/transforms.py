@@ -16,10 +16,13 @@ for word in nlp.Defaults.stop_words:
     lex.is_stop = True
 
 
-def tokens_to_str(tokens, spaces_before_punct=False, cap_first_word=True, add_period=True):
+def tokens_to_str(tokens, spaces_before_punct=False, cap_first_word=True, 
+                  add_period=True, convert_to_lemmas=False, remove_stop_words=False, 
+                  remove_punct=False, lower_case=False, remove_numbers=False):
+    
     tokens = list(tokens)
     
-    if add_period:
+    if add_period and not remove_punct:
         if isinstance(tokens[-1], str) or not tokens[-1].is_punct:
             tokens.append('.')
         elif tokens[-1].is_punct:
@@ -31,6 +34,8 @@ def tokens_to_str(tokens, spaces_before_punct=False, cap_first_word=True, add_pe
     for i, token in enumerate(tokens):
         is_first_word = i == 0
         
+        # TODO: Most of these, especially skip_space, can be simplified
+        # by looking at the stings and not the tokens.
         cur_not_string = not isinstance(token, str)
         last_two_not_str = i >= 1 and cur_not_string and not isinstance(tokens[i - 1], str)
         last_three_not_str = i >= 2 and last_two_not_str and not isinstance(tokens[i - 2], str)
@@ -38,17 +43,28 @@ def tokens_to_str(tokens, spaces_before_punct=False, cap_first_word=True, add_pe
         is_word_after_hyphen = last_two_not_str and not token.is_punct and tokens[i - 1].text == '-'    
         cur_is_punct = (cur_not_string and (token.is_punct or token.dep_ == 'case' or token.text == "n't")) or not cur_not_string and token in ('.')   
         is_open_quote = cur_not_string and token.text == '"' and sum(1 for s in strings if s == '"') % 2 == 0
-        last_is_open_quote = not is_first_word and strings[-1] == '"' and sum(1 for s in strings if s == '"') % 2 != 0
-        skip_space = is_first_word or is_hyphen or is_word_after_hyphen
+        last_is_open_quote = strings and strings[-1] == '"' and sum(1 for s in strings if s == '"') % 2 != 0
+        skip_space = is_first_word or ((is_hyphen or is_word_after_hyphen) and not remove_punct)
+        
+        if remove_stop_words and cur_not_string and token.is_stop:
+            continue
+            
+        if remove_numbers and cur_not_string and token.pos_ == 'NUM':
+            continue
+            
+        if remove_punct and cur_not_string and token.is_punct:
+            continue
         
         if not spaces_before_punct:
             skip_space = True if cur_is_punct and not spaces_before_punct else skip_space
             skip_space = False if is_open_quote else skip_space
             skip_space = True if last_is_open_quote else skip_space
         
-        
         if not isinstance(token, str):
-            token = token.text
+            if not convert_to_lemmas:
+                token = token.text
+            else:
+                token = token.lemma_
         
         token = token.strip()
         if not token:
@@ -57,12 +73,18 @@ def tokens_to_str(tokens, spaces_before_punct=False, cap_first_word=True, add_pe
         if not skip_space:
             strings.append(' ')
             
-        if is_first_word and cap_first_word and '<' not in token:
+        if cap_first_word and not lower_case and is_first_word and '<' not in token:
             token = token.capitalize()
             
+        if lower_case and '<' not in token:
+            token = token.lower()
+            
         strings.append(token)
-        
-    return ''.join(strings)
+    
+    # TODO the strip here shouldn't be needed, but some of them are starting with 
+    # with blanks in lemmatized version. It's probably the space being added in
+    # line 70.
+    return ''.join(strings).strip()  
 
 
 def extract_phrase(subject_token, target_name):
@@ -85,6 +107,7 @@ def extract_phrase(subject_token, target_name):
     for selected_token in selected_tokens:
         token_is_string = isinstance(selected_token, str)
         prev_token_is_string = output and isinstance(output[-1], str)
+        prev_token_is_meta = prev_token_is_string and '<' in output[-1]
         cur_and_prev_are_meta = output and token_is_string and prev_token_is_string and '<' in selected_token and '<' in output[-1]
 
         is_space_or_new_line = not token_is_string and not selected_token.text.strip()
@@ -107,7 +130,10 @@ def extract_phrase(subject_token, target_name):
             if not output or not isinstance(output[-1], str) or '<' not in output[-1]: 
                 output.append(meta_token)
             continue
-            
+        
+        # Prevents Spider-Man from becoming <ENITY>-<ENITY>.
+        if not token_is_string and selected_token.text == '-' and prev_token_is_meta:
+            continue
         
         if cur_and_prev_are_meta or is_space_or_new_line:
             if '<SUBJECT>' in (selected_token, output[-1]):
@@ -124,7 +150,7 @@ def get_subject_tokens(text, target_name):
     def subject_test(token):
         return 'nsubj' in token.dep_ and token.pos_ == 'PROPN' and token.text.lower() in target_name.lower()
     
-    remove_patterns = [r'\(.+?\)', r'\[.+?\]']
+    remove_patterns = [r'\(.+?\)', r'\[.+?\]', r'#']
     for pattern in remove_patterns:
         text = re.sub(pattern, '', text)
     
