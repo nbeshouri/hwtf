@@ -6,6 +6,7 @@ This module contains utilities used by other modules or notebooks.
 import os
 from glob import glob
 import re
+import joblib
 
 
 data_dir_path = os.path.join(os.path.dirname(__file__), 'data')
@@ -31,6 +32,16 @@ def load_values(file_name):
             output.append(value)
     return output
          
+def load_data(file_name):
+    load_path = os.path.join(data_dir_path, file_name)
+    data = joblib.load(load_path)
+    return data
+
+
+def save_data(data, file_name, compress=3):
+    path = os.path.join(data_dir_path, file_name)
+    archive_data(file_name)
+    joblib.dump(data, path, compress=compress)
 
 
 def archive_data(file_name):

@@ -5,15 +5,7 @@ also contain some of the data manipulation funtions in models.py.
 """
 
 import re
-import spacy
-
-
-nlp = spacy.load('en_core_web_lg')
-# Due to a bug, this language model doesn't contain
-# stop words, so we fix that here.
-for word in nlp.Defaults.stop_words:
-    lex = nlp.vocab[word]
-    lex.is_stop = True
+from . import nlp, utils
 
 
 def tokens_to_str(tokens, spaces_before_punct=False, cap_first_word=True, 
@@ -154,7 +146,8 @@ def get_subject_tokens(text, target_name):
     for pattern in remove_patterns:
         text = re.sub(pattern, '', text)
     
-    parsed = nlp(text)
+    nlp_model = nlp.get_large_model()
+    parsed = nlp_model(text)
     
     is_subject = []
     subjects_of_interest = []
@@ -177,20 +170,22 @@ def get_subject_tokens(text, target_name):
     return output
 
 
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
+def filter_subtree(head, rules):
+    for rule, replacement in rules:
+        if rule(head):
+            if callable(replacement):
+                replacement = replacement(head)
+            return [replacement]
+    if len(list(head.children)) == 0:
+        return [head]
+    output = []
+    for child in head.lefts:
+        output.extend(get_subtree(child, rules))
+    output.append(head)
+    for child in head.rights:
+        output.extend(get_subtree(child, rules))
+    
+    return [token for token in output if token]
 
 
 def normalize(text):
@@ -224,9 +219,13 @@ def normalize(text):
 
 def to_lemmas(text):
     """Convert words in `text` to a string of lemmas."""
+    # TODO: Option to leave hypens in tact?
+    # TODO: Some of this stuff should be optional.
+    nlp_model = nlp.get_minimal_model()
     lemmas = []
-    for token in nlp(text):
-        if not token.is_punct and not token.is_stop and len(token.text) < 15:
+    text = text.lower()
+    for token in nlp_model(text):
+        if not token.is_punct and not token.is_stop and not token.is_digit and len(token.text) < 15:
             if token.lemma_ != ' ':
                 lemmas.append(token.lemma_.strip())
     return ' '.join(lemmas)
@@ -236,7 +235,8 @@ def to_tokens(text):
     """Convert words in `text` to a string of tokens."""
     tokens = []
     allowed_punct = set('.?!,')
-    for token in nlp(text):
+    nlp_model = nlp.get_minimal_model()
+    for token in nlp_model(text):
         if ((token.is_punct and token.text not in allowed_punct)
                 or len(token.text) > 15
                 or token.text == ' '):
@@ -250,5 +250,57 @@ def get_polarity(text):
     from textblob import TextBlob
     blob = TextBlob(text)
     return blob.sentiment.polarity
-    
 
+# TODO: And other crap, it should be called.
+def remove_ents(text, lowercase=True, lemmatize=True, remove_stop_words=True, remove_punct=True):
+    nlp_model = nlp.get_large_model()
+    output = []
+    for token in nlp_model(text):
+        if (token.pos_ == 'PROPN' 
+                or token.lemma_ == '-PRON-'
+                or token.text == "'s"
+                or token.ent_type_ 
+                or not token.is_ascii 
+                or not token.text.strip() 
+                or (remove_stop_words and token.is_stop) 
+                or (remove_punct and token.is_punct)):
+            continue
+        if lemmatize:
+            text = token.lemma_
+        else:
+            text = token.text
+        if lowercase:
+            text = text.lower()
+        output.append(text)
+    return ' '.join(output)
+
+
+_title_black_list = utils.load_values('character_article_title_black_list.csv')
+_title_black_list = list(map(lambda x: x.lower(), _title_black_list))
+
+
+def filter_titles(article_to_name):
+    # TODO: This should auto exclude blocked wiki titles.
+    output = {}
+    for name, article in article_to_name.items():
+        for pattern in _title_black_list:
+            if pattern in name.lower():
+                break
+        else:
+            output[name] = article
+    return output
+
+
+_word_black_list = sorted(utils.load_values('character_article_word_black_list.csv'), key=lambda x: -len(x))
+
+
+def remove_black_listed(doc_string):
+    # patterns = [r'<.+?>']  # Remove <SUBJECT> tokens.
+    patterns = []  # Remove <SUBJECT> tokens.
+    for pattern in _word_black_list:
+        patterns.append(r'\b' + pattern + r'\b')
+    for pattern in patterns:
+        doc_string = re.sub(pattern, '', doc_string, flags=re.IGNORECASE)
+    doc_string = re.sub(r'\s{2,}', ' ', doc_string)
+    doc_string = doc_string.strip()
+    return doc_string

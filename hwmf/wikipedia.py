@@ -22,14 +22,16 @@ def get_pages_with_category(category_patterns, title_black_list=None, limit=None
     def process_page(text):
         title = re.search(r'<title>(.+)</title>', text).group(1)
         
-        default_black_list = [
+        black_list = [
             '(disabiguation)', 
             'List of', 
             'Category:',
             'Template:',
+            'File:'
         ]
         
-        black_list = default_black_list + title_black_list
+        if title_black_list is not None:
+            black_list = black_list + title_black_list
         
         for title_pattern in black_list:
             if title_pattern in title:
@@ -53,10 +55,11 @@ def get_pages_with_category(category_patterns, title_black_list=None, limit=None
         text_node = soup.find('text')
         article_text = text_node.get_text()
         title_to_page[title] = article_text
-        
-        if len(title_to_page) % 1 == 0:
+
+        if len(title_to_page) % 1000 == 0:
             print('Articles found:', len(title_to_page), 'Last title:', title)
-        
+    
+    # TODO: Readlines?    
     with bz2.open(DUMP_PATH, 'rt', encoding='utf-8') as f:
         article_lines = None
         for line in f:
@@ -69,27 +72,40 @@ def get_pages_with_category(category_patterns, title_black_list=None, limit=None
                 article_lines.append(line)
             if '</page>' in line:            
                 text = ''.join(article_lines)
-                try:
-                    process_page(text)    
-                except Exception as e:
-                    print(e)
+                
+                process_page(text)    
+                
+                # try:
+                #     process_page(text)    
+                # except Exception as e:
+                #     print(e)
                 article_lines = None
                 
     return title_to_page
 
 
-def de_wiki(text):
+def de_wiki(text, truncation_patterns=None, remove_section_names=False):
+    # TODO: The casting section shouldn't be dumped if its the main section.
     patterns_to_remove = [
         r'\<ref.*?\</ref\>', 
         r'{{[^{]+?}}',  # Some of these do contain content, e.g. {{c.|lk=no|1100}} and {{nihongo|'''Prince Zuko'''|祖寇|Zǔ Kòu}}
         r'{{[^{]+?}}',  # HACK: Repeat pattern for nested versions that sometimes appear.
         r'{{[^{]+?}}',
+        r'<!--.*?-->',  # Comments.
         r'\[\[File:.+?(?=\n)',
-        r'={2,5}((See also)|(Notes)|(Sources)|(References))={2,5}.*'
+        r'{\|.*?\|}',
+        r'={2,10}((See also)|(Notes)|(Sources)|(References)|(Bibliography))={2,10}.*',
     ]
-    
+
     for pattern in patterns_to_remove:
-        text = re.sub(pattern, '', text, flags=(re.MULTILINE | re.DOTALL))
+        text = re.sub(pattern, '', text, flags=(re.MULTILINE | re.DOTALL | re.IGNORECASE))
+
+    if truncation_patterns is not None:
+        for truncation_pattern in truncation_patterns:
+            text = re.split(truncation_pattern, text, flags=re.IGNORECASE)[0]
+    
+    if remove_section_names:
+        text = re.sub(r'={2,10}.*?={2,10}', '', text)
     
     patterns_to_sub = [
         (r'\[\[([^|]+?)\]\]', r'\1'),
@@ -97,14 +113,50 @@ def de_wiki(text):
         (r"'''(.+?)'''", r'\1'),
         (r"''(.+?)''", r"\1"),
         (r"<nowiki>(.+?)</nowiki>", r"\1"), 
-        (r'\n+', r'\n\n')
+        (r'\n+', r'\n\n'),
+        (r'  ', ' '),
+        (r'&nbsp;', ' ')
     ]
-    
+
     for pattern, replacement in patterns_to_sub:
         text = re.sub(pattern, replacement, text)
         
+    
+            
+    
+        
+        
+
     return text.strip()        
 
+
+# def de_wiki(text, trucation_patterns=[]):
+# 
+#     patterns_to_remove = [
+#         r'\<ref.*?\</ref\>', 
+#         r'{{[^{]+?}}',  # Some of these do contain content, e.g. {{c.|lk=no|1100}} and {{nihongo|'''Prince Zuko'''|祖寇|Zǔ Kòu}}
+#         r'{{[^{]+?}}',  # HACK: Repeat pattern for nested versions that sometimes appear.
+#         r'{{[^{]+?}}',
+#         r'\[\[File:.+?(?=\n)',
+#         r'={2,5}((See also)|(Notes)|(Sources)|(References)|(Bibliography)|(' + stop_at_section + '))={2,5}.*'
+#     ]
+# 
+#     for pattern in patterns_to_remove:
+#         text = re.sub(pattern, '', text, flags=(re.MULTILINE | re.DOTALL))
+# 
+#     patterns_to_sub = [
+#         (r'\[\[([^|]+?)\]\]', r'\1'),
+#         (r'\[\[(.+?)\|(.+?)\]\]', r'\2'), 
+#         (r"'''(.+?)'''", r'\1'),
+#         (r"''(.+?)''", r"\1"),
+#         (r"<nowiki>(.+?)</nowiki>", r"\1"), 
+#         (r'\n+', r'\n\n')
+#     ]
+# 
+#     for pattern, replacement in patterns_to_sub:
+#         text = re.sub(pattern, replacement, text)
+# 
+#     return text.strip()   
 
 def get_paragraphs(text):
     text = re.sub(r'==.+==', '', text)
@@ -112,7 +164,7 @@ def get_paragraphs(text):
     return [p for p in paragraphs if p]
     
     
-def convert_articles(name_to_article, lemmatize=False, limit=None):
+def convert_articles(name_to_article, limit=None):
     tokenized_articles = {}
     lemmatized_articles = {}
     for article_name, text in name_to_article.items():
@@ -174,19 +226,25 @@ def sandbox():
     
     patterns = [
         r'.+characters in.+',
-        r'.*characters introduced in' 
+        r'.*characters introduced in',
+        r'Characters in.+'
     ]
     
-    title_to_page = get_pages_with_category(
+    title_to_page_raw = get_pages_with_category(
         patterns, 
         title_black_list=title_black_list, 
         limit=125000
     )
+    title_to_page = {}
+    for name, article in title_to_page_raw.items():
+        match = re.search('==.*(Characters|Cast).*==', article, re.IGNORECASE)
+        if not match:
+            title_to_page[name] = article
     
     file_name = 'character_bios.pickle'
-    # path = os.path.join(data_dir_path, file_name)
-    # utils.archive_data(file_name)
-    # joblib.dump(title_to_page, path, compress=3)
+    path = os.path.join(data_dir_path, file_name)
+    utils.archive_data(file_name)
+    joblib.dump(title_to_page, path, compress=3)
     
 
 def sandbox3():
