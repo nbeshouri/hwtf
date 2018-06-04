@@ -1,6 +1,5 @@
 """
-This module contains the code to train both of the two models as well
-as some model specific and show specific utilities.
+This module contains functions used to train the models used in the project.
 
 """
 
