@@ -13,12 +13,22 @@ data_dir_path = os.path.join(os.path.dirname(__file__), 'data')
 archived_data_dir_path = os.path.join(data_dir_path, 'archived')
 
 
+def matches_patterns(patterns, text, flags=re.IGNORECASE):
+    """Return true if the matches any of the given patterns."""
+    # TODO: This would probably be more efficient if you
+    # joined all these patterns together and did a single searc.
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=flags)
+        if match is not None:
+            return True
+    return False
+
+
 def load_values(file_name):
+    """Import a file contain a list of comma separated strs as a list."""
     path = os.path.join(data_dir_path, file_name)
     with open(path) as f:
-        # print('hi2', f.read())
         data_str = f.read()
-    # print('hi', data_str)
     data_str = data_str.replace('\n', ',')
     values = data_str.split(',')
     values = [v.strip() for v in values if v.strip()]
@@ -31,24 +41,24 @@ def load_values(file_name):
         else:
             output.append(value)
     return output
+
          
 def load_data(file_name):
+    """Load a pickled file from the local data directory."""
     load_path = os.path.join(data_dir_path, file_name)
     data = joblib.load(load_path)
     return data
 
 
 def save_data(data, file_name, compress=3):
+    """Pickle data and save it in the local data directory."""
     path = os.path.join(data_dir_path, file_name)
     archive_data(file_name)
     joblib.dump(data, path, compress=compress)
 
 
 def archive_data(file_name):
-    """
-    Move a file in the data folder to the archive folder if the file exists.
-    
-    """
+    """Move a file in the data folder to the archive folder if the file exists."""
     if '/' in file_name:
         raise ValueError('`file_name` should be a file name, not a path.')
     
